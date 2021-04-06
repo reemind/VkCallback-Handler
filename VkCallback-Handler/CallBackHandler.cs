@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -12,19 +13,29 @@ namespace VkCallbackApi
     public class VkMethod : Attribute
     {
         public string Method { get; }
+        Action Action { get; set; }
 
         public VkMethod(string method)
         {
             Method = method;
         }
+
+        public VkMethod(string method, Action action)
+        {
+            Method = method;
+            Action = action;
+        }
+
+        public void Process()
+            => Action?.Invoke();
     }
 
     public static class VkHandler
     {
-        public static void Handle<T>(T instance, CallbackResponse response)
-            => Handle<T, object>(instance, response);
+        public static void Handle<T>(T instance, CallbackResponse response, Action<string> action = null)
+            => Handle<T, object>(instance, response, action);
 
-        public static TOut Handle<T, TOut>(T instance, CallbackResponse response)
+        public static TOut Handle<T, TOut>(T instance, CallbackResponse response, Action<string> action = null)
         {
             var type = typeof(T);
 
@@ -32,8 +43,8 @@ namespace VkCallbackApi
 
             foreach (var item in type.GetMethods())
             {
-                var attributes = item.GetCustomAttributes(typeof(VkMethod), true);
-                if (attributes.Select(t => (t as VkMethod).Method).Contains(response.Type))
+                var attr = item.GetCustomAttributes(typeof(VkMethod), true).FirstOrDefault() as VkMethod;
+                if (attr != null && attr.Method == response.Type)
                 {
                     var pars = item.GetParameters();
                     var parlist = new List<object>();
@@ -47,6 +58,8 @@ namespace VkCallbackApi
                             throw new ArgumentException("Unknown parameters");
                     }
 
+                    action?.Invoke(response.Type);
+                    attr.Process();
                     result = item.Invoke(instance, parlist.ToArray());
                 }
             }
@@ -56,6 +69,12 @@ namespace VkCallbackApi
             else
                 return default;
         }
+
+        public static Task HandleAsync<T>(T instance, CallbackResponse response, Action<string> action = null)
+            => Task.Factory.StartNew(() => Handle(instance, response, action));
+
+        public static Task<TOut> HandleAsync<T, TOut>(T instance, CallbackResponse response, Action<string> action = null)
+            => Task.Factory.StartNew(() => Handle<T, TOut>(instance, response, action));
     }
 
     [Serializable]
